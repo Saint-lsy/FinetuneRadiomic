@@ -1,3 +1,4 @@
+# -*- coding: UTF-8 -*-
 """
 Finetuning Torchvision Models
 =============================
@@ -17,6 +18,7 @@ import torchvision
 from torchvision import datasets, models, transforms
 from torch.utils.data import Dataset
 from torch.utils.tensorboard import SummaryWriter
+import matplotlib.pyplot as plt
 #import local_models
 #import matplotlib.pyplot as plt
 import time
@@ -31,6 +33,7 @@ from sklearn.metrics import roc_auc_score
 print("PyTorch Version: ",torch.__version__)
 print("Torchvision Version: ",torchvision.__version__)
 
+writer = SummaryWriter('tensorboard/experiment1')
 seed = 7
 torch.manual_seed(seed)            # 为CPU设置随机种子
 torch.cuda.manual_seed(seed)       # 为当前GPU设置随机种子
@@ -50,7 +53,7 @@ exVal_dir2 = 'I:\\DL_Data\\CAMS_ZL\\Quarter_AreaRate050_image\\Group\\testFK'
 
 
 # data_dir = '/data/train_val_test/ln3_A/'
-data_dir = '/data/tvt_roi/ln3_A/'
+data_dir = '/data/data_lsy/tvt_64/ln3_A/'
 typeln = 'ln3_A'
 # data_dir_2 = '/data/train_val_test/ln3_A/'
 
@@ -65,47 +68,40 @@ num_classes = 2
 batch_size = 16
 
 # Number of epochs to train for 
-num_epochs = 50
+num_epochs = 100
 
 # Flag for feature extracting. When False, we finetune the whole model, 
 #   when True we only update the reshaped layer params
 feature_extract = True
 
 
-# class MyDataset(Dataset):
-#     def __init__(self, file_path, transform = None, target_transform = None):
-#         """
-#         transform：数据处理，对图像进行随机剪裁，以及转换成tensor
-#         """
-#         self.img_paths = []
-#         dirs = os.listdir(file_path)
-#         for dir in dirs:
-#             label_file_path = os.path.join(file_path, dir)
-#             img_paths= glob.glob(os.path.join(label_file_path, "*.npy")) 
-#             for img_path in img_paths:
-#                 label = int(dir) 
-#                 self.img_paths.append((img_path, label))
-#         # self.img_paths= glob.glob(os.path.join(file_path, "*.npy"))  
-#         random.shuffle(self.img_paths)               
-#         self.transform = transform
-#         self.target_transform = target_transform
+class MyDataset(Dataset):
+    def __init__(self, file_path, transform = None, target_transform = None):
+        """
+        transform：数据处理，对图像进行随机剪裁，以及转换成tensor
+        """
+        self.datas = []
+        self.labels = []
+        img_paths= glob.glob(os.path.join(file_path, "*.npy")) 
+        for path in img_paths:
+            img, label= np.load(path, allow_pickle=True)   #通过index索引返回一个图像路径fn 与 标签label
+            for i in range(3):
+                self.data.append(img[:,:,i])
+                self.labels.append(label)
+        self.transform = transform
+        self.target_transform = target_transform
     
-#     def __getitem__(self, index):
-#         img = np.load(self.img_paths[index][0], allow_pickle=True)   #通过index索引返回一个图像路径fn 与 标签label
-#         label = self.img_paths[index][1]
-#         if int(label)== 1:
-#             label = np.array([1,0])
-#         else:
-#             label = np.array([0, 1])
-#         # label = np.array(label)
-#         label = torch.FloatTensor(label)
-#         # img = torch.tensor(img)
-#         if self.transform is not None:
-#             img = self.transform(img) 
-#         return img, label              #这就返回一个样本
+    def __getitem__(self, index):
+        img, label= np.load(self.img_paths[index], allow_pickle=True)   #通过index索引返回一个图像路径fn 与 标签label
+
+        label = int(label)
+        if self.transform is not None:
+            img = self.transform(img) 
+        return img, label              #这就返回一个样本
     
-#     def __len__(self):
-#         return len(self.img_paths)          #返回长度，index就会自动的指导读取多少
+    def __len__(self):
+        return len(self.img_paths)          #返回长度，index就会自动的指导读取多少
+
 class MyDataset(Dataset):
     def __init__(self, file_path, transform = None, target_transform = None):
         """
@@ -118,13 +114,14 @@ class MyDataset(Dataset):
     
     def __getitem__(self, index):
         img, label= np.load(self.img_paths[index], allow_pickle=True)   #通过index索引返回一个图像路径fn 与 标签label
-        if int(label)== 0:
-            label = np.array([1,0])
-        else:
-            label = np.array([0, 1])
+        # if int(label)== 0:
+        #     label = np.array([1,0])
+        # else:
+        #     label = np.array([0, 1])
         # label = np.array(label)
-        label = torch.FloatTensor(label)
+        # label = torch.FloatTensor(label)
         # img = torch.tensor(img)
+        label = int(label)
         if self.transform is not None:
             img = self.transform(img) 
         return img, label              #这就返回一个样本
@@ -176,10 +173,8 @@ class FocalLossV1(nn.Module):
 def train_model(model, dataloaders, criterion, optimizer, num_epochs=50, is_inception=False):
     since = time.time()
     val_acc_history = []
-    val_auc_history = []
     best_model_wts = copy.deepcopy(model.state_dict())
     best_acc = 0.0
-    best_auc = 0.0
 
     for epoch in range(num_epochs):
         starttime = time.time()
@@ -201,7 +196,6 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=50, is_ince
             for inputs, labels in dataloaders[phase]:
                 inputs = inputs.to(device)
                 labels = labels.to(device)
-
                 # zero the parameter gradients
                 optimizer.zero_grad()
 
@@ -224,8 +218,6 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=50, is_ince
 
                     _, preds = torch.max(outputs, 1)
 
-                    pred_score = outputs[:,1].cpu().detach().numpy()
-
                     # backward + optimize only if in training phase
                     if phase == 'train':
                         loss.backward()
@@ -233,17 +225,17 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=50, is_ince
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
-                _, gt_labels = torch.max(labels.data, 1)
-                running_corrects += torch.sum(preds == gt_labels)  # preds == labels.data, 返回的torch元素为0或1,不是bool类型
+                running_corrects += torch.sum(preds == labels.data)  # preds == labels.data, 返回的torch元素为0或1,不是bool类型
                 #NPpreds = preds.data.cpu().numpy()   #GPU tensor不能直接转为numpy数组，必须先转到CPU tensor
-                TP += torch.sum((preds.data == gt_labels) & (gt_labels == 1))
-                TN += torch.sum((preds.data == gt_labels) & (gt_labels == 0))
-                FP += torch.sum((preds.data != gt_labels) & (gt_labels == 0))
-                FN += torch.sum((preds.data != gt_labels) & (gt_labels == 1))
+                TP += torch.sum((preds.data == labels.data) & (labels.data == 1))
+                TN += torch.sum((preds.data == labels.data) & (labels.data == 0))
+                FP += torch.sum((preds.data != labels.data) & (labels.data == 0))
+                FN += torch.sum((preds.data != labels.data) & (labels.data == 1))
 
-            if phase == 'val':
-                auc = roc_auc_score(gt_labels.cpu().numpy(),pred_score)
 
+            # if phase == 'val':
+            #     print(pred_score)
+            #     epoch_auc = roc_auc_score(labels.data.cpu().numpy(),pred_score)
             epoch_loss = running_loss / len(dataloaders[phase].dataset)
             epoch_acc = running_corrects.double() / len(dataloaders[phase].dataset)
             epoch_sens = TP.double() / (TP + FN)
@@ -251,35 +243,24 @@ def train_model(model, dataloaders, criterion, optimizer, num_epochs=50, is_ince
             #测试代码
             # acc2 = (TP.double() + TN.double()) / (TP+FN+TN+FP)
             # print(acc2,epoch_acc,'相等就对了')
-            if phase == 'train':
-                print('{} Loss: {:.4f} Acc: {:.4f} sens: {:.4f} spec {:.4f}'.format(phase, epoch_loss, epoch_acc, epoch_sens, epoch_spec))
-            else:
-                print('{} Loss: {:.4f} Acc: {:.4f} sens: {:.4f} spec {:.4f} auc {:.4f}'.format(phase, epoch_loss, epoch_acc, epoch_sens, epoch_spec, auc))
+            print('{} Loss: {:.4f} Acc: {:.4f} sens: {:.4f} spec {:.4f}'.format(phase, epoch_loss, epoch_acc, epoch_sens, epoch_spec))
 
             # deep copy the model
-            # if phase == 'val' and epoch_acc > best_acc:
-            #     best_acc = epoch_acc
-            #     sens = epoch_sens
-            #     spec = epoch_spec
-            #     best_model_wts = copy.deepcopy(model.state_dict())
-
-            if phase == 'val' and auc > best_auc:
-                best_auc = auc
-                acc = epoch_acc
+            if phase == 'val' and epoch_acc > best_acc:
+                best_acc = epoch_acc
                 sens = epoch_sens
                 spec = epoch_spec
                 best_model_wts = copy.deepcopy(model.state_dict())
-                
+
             if phase == 'val':
                 val_acc_history.append(epoch_acc)
-                val_auc_history.append(auc)
                 endtime = time.time()
                 print ('Total time of this epoch:%f' % (endtime-starttime))
 
 
     time_elapsed = time.time() - since
     print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
-    print('Best auc {:4f} val Acc: {:4f} with sens {:4f} and spec {:4f}'.format(best_auc, acc, sens, spec))
+    print('Best val Acc: {:4f} with sens {:4f} and spec {:4f}'.format(best_acc, sens, spec))
 
     # load best model weights
     model.load_state_dict(best_model_wts)
@@ -301,7 +282,7 @@ def set_parameter_requires_grad(model, feature_extracting):
 
 #######################  External Validation  
 
-def ExValidation(model, exvalDataloaders, criterion,rtn_score = False):
+def ExValidation(model, exvalDataloaders, criterion):
 
     model.eval()   # Set model to evaluate mode
     running_loss = 0.0
@@ -329,28 +310,23 @@ def ExValidation(model, exvalDataloaders, criterion,rtn_score = False):
             
             pred_score = outputs[:,1].cpu().detach().numpy()            
 
-
         # statistics
         running_loss += loss.item() * inputs.size(0)
-        _, gt_labels = torch.max(labels.data, 1)
-        running_corrects += torch.sum(preds == gt_labels)  # preds == labels.data, 返回的torch元素为0或1,不是bool类型
+        running_corrects += torch.sum(preds == labels.data)  # preds == labels.data, 返回的torch元素为0或1,不是bool类型
         #NPpreds = preds.data.cpu().numpy()   #GPU tensor不能直接转为numpy数组，必须先转到CPU tensor
         #下面这种只在二分类适用的以后要进行普适化更改，if 类别数 == 2：
-        TP += torch.sum((preds.data == gt_labels) & (gt_labels == 1))
-        TN += torch.sum((preds.data == gt_labels) & (gt_labels == 0))
-        FP += torch.sum((preds.data != gt_labels) & (gt_labels == 0))
-        FN += torch.sum((preds.data != gt_labels) & (gt_labels == 1))
+        TP += torch.sum((preds.data == labels.data) & (labels.data == 1))
+        TN += torch.sum((preds.data == labels.data) & (labels.data == 0))
+        FP += torch.sum((preds.data != labels.data) & (labels.data == 0))
+        FN += torch.sum((preds.data != labels.data) & (labels.data == 1))
 
-    auc = roc_auc_score(gt_labels.cpu().numpy(),pred_score)   
     loss = running_loss / len(exvalDataloaders.dataset)
     acc = running_corrects.double() / len(exvalDataloaders.dataset)
     sens = TP.double() / (TP + FN)
     spec = TN.double() / (TN + FP)
-    print('External validation \n Loss: {:.4f} Acc: {:.4f} sens: {:.4f} spec {:.4f} auc {:.4f}'.format(loss, acc, sens, spec,auc))
-    if rtn_score:
-        return pred_score
-    else:
-        return acc,sens,spec
+    print('External validation \n Loss: {:.4f} Acc: {:.4f} sens: {:.4f} spec {:.4f} '.format(loss, acc, sens, spec))
+
+    return acc,sens,spec
 
 
 
@@ -479,16 +455,16 @@ data_transforms = {
         # transforms.RandomResizedCrop(input_size),
         transforms.RandomHorizontalFlip(),
         # transforms.RandomVerticalFlip(),
-        # transforms.ColorJitter(brightness=0.5, contrast=0.5, hue=0.5),
+        transforms.ColorJitter(brightness=0.5, contrast=0.5, hue=0.5),
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])   #imagenet
+        transforms.Normalize([0.681, 0.681, 0.681], [0.10, 0.10, 0.10])   #imagenet
     ]),
     'val': transforms.Compose([
         transforms.ToPILImage(),#不转换为PIL会报错
         transforms.Resize(input_size),
         transforms.CenterCrop(input_size),
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        transforms.Normalize([0.68, 0.68, 0.68], [0.10, 0.10, 0.10])
     ]),
 }
 
@@ -497,7 +473,7 @@ exVal_transforms = transforms.Compose([
         transforms.Resize(input_size),
         transforms.CenterCrop(input_size),
         transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        transforms.Normalize([0.68, 0.68, 0.68], [0.10, 0.10, 0.10])
     ])
     
 print("Initializing Datasets and Dataloaders...")
@@ -506,15 +482,14 @@ print("Initializing Datasets and Dataloaders...")
 
 # Create training and validation datasets
 image_datasets = {x: MyDataset(os.path.join(data_dir, x), data_transforms[x]) for x in ['train', 'val']}
+
 # Create training and validation dataloaders
-
-
 train_data = MyDataset(os.path.join(data_dir,'train'))
+
 train_weights = []
 for i in range(len(train_data)):
-    _, label = train_data[i]
-    _, gt_labels = torch.max(label , dim=0)    
-    if gt_labels == 0:
+    _, label = train_data[i]  
+    if label == 0:
         train_weights.append(1/383)
     else:
         train_weights.append(1/168)     
@@ -524,9 +499,8 @@ train_sampler = torch.utils.data.sampler.WeightedRandomSampler(train_weights, le
 val_data = MyDataset(os.path.join(data_dir,'val'))
 val_weights = [] 
 for i in range(len(val_data)):
-    _, label = val_data[i]
-    _, gt_labels = torch.max(label , dim=0)   
-    if gt_labels == 0:
+    _, label = val_data[i]  
+    if label == 0:
         val_weights.append(1/82)
     else:
         val_weights.append(1/36)      
@@ -598,7 +572,7 @@ else:
 
 # Observe that all parameters are being optimized
 # optimizer_ft = optim.SGD(params_to_update, lr=0.005, momentum=0.9)
-optimizer_ft = optim.Adam(params_to_update, lr=0.001,  betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=True)
+optimizer_ft = optim.Adam(params_to_update, lr=0.005,  betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=True)
 
 
 ######################################################################
@@ -622,17 +596,13 @@ criterion = nn.CrossEntropyLoss()
 model_ft, hist = train_model(model_ft, dataloaders_dict, criterion, optimizer_ft, num_epochs=num_epochs, is_inception=(model_name=="inception"))
 
 
-# exVal_image_datasets = MyDataset(exVal_dir, exVal_transforms) 
-# # Create training and validation dataloaders
-# exVal_dataloaders_dict = torch.utils.data.DataLoader(exVal_image_datasets, batch_size=len(exVal_image_datasets), shuffle=False, num_workers=0) 
-
-# # random.seed(0)
-# exVal_acc,exVal_sens,exVal_spec = ExValidation(model_ft, exVal_dataloaders_dict, criterion)
-
-
 # image_datasets_2 = {x: datasets.ImageFolder(os.path.join(data_dir_2, x), data_transforms[x]) for x in ['train', 'val']}
 # # Create training and validation dataloaders
 # dataloaders_dict_2 = {x: torch.utils.data.DataLoader(image_datasets_2[x], batch_size=batch_size, shuffle=True, num_workers=0) for x in ['train', 'val']}
+
+
+
+
 
 '''
 second train
@@ -641,7 +611,7 @@ second train
 image_datasets_2 = image_datasets
 dataloaders_dict_2 = dataloaders_dict
 feature_extract = False
-num_epochs = 100
+num_epochs = 50
 # Detect if we have a GPU available
 if not torch.cuda.is_available() == True:
     raise IOError('The cuda is not available!')
@@ -752,8 +722,7 @@ def readoutputs(model, exvalDataloaders):
             #   but in testing we only consider the final output.
             outputs = model(inputs)
             outputs = outputs.data.cpu().detach()[0].numpy().tolist()
-            _, gt_labels = torch.max(labels.data, 1)
-            gt_labels = gt_labels.data.cpu().detach().numpy()
+            gt_labels = labels.data.cpu().detach().numpy()
             out.append(outputs)
             gt_labels_list = np.concatenate((gt_labels_list, gt_labels))  
     return out, gt_labels_list
@@ -791,12 +760,12 @@ test_label_score  = np.concatenate((test_labels, test_scores),axis=1)
 print(test_label_score.shape)
 
 import pandas as pd
-df1 = pd.DataFrame(train_label_score,columns=['train_label','train_0','train_1'])
-df2 = pd.DataFrame(val_label_score,columns=['val_label','val_0','val_1'])
-df3 = pd.DataFrame(test_label_score,columns=['test_label','test_0','test_1'])
-df1.to_excel('train_'+ typeln +'.xls')
-df2.to_excel('val_'+ typeln +'.xls')
-df3.to_excel('test_'+ typeln +'.xls')
+# df1 = pd.DataFrame(train_label_score,columns=['train_label','train_0','train_1'])
+# df2 = pd.DataFrame(val_label_score,columns=['val_label','val_0','val_1'])
+# df3 = pd.DataFrame(test_label_score,columns=['test_label','test_0','test_1'])
+# df1.to_excel('train_'+ typeln +'.xls')
+# df2.to_excel('val_'+ typeln +'.xls')
+# df3.to_excel('test_'+ typeln +'.xls')
 
 ######################################################################
 '''
