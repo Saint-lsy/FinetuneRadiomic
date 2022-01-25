@@ -28,12 +28,12 @@ import random
 import glob
 import numpy as np
 from torch.backends import cudnn
-from sklearn.metrics import roc_auc_score
+from dataset import MyDataset
+from mean_variance import getStat
 
 print("PyTorch Version: ",torch.__version__)
 print("Torchvision Version: ",torchvision.__version__)
 
-writer = SummaryWriter('tensorboard/experiment1')
 seed = 7
 torch.manual_seed(seed)            # 为CPU设置随机种子
 torch.cuda.manual_seed(seed)       # 为当前GPU设置随机种子
@@ -53,7 +53,7 @@ exVal_dir2 = 'I:\\DL_Data\\CAMS_ZL\\Quarter_AreaRate050_image\\Group\\testFK'
 
 
 # data_dir = '/data/train_val_test/ln3_A/'
-data_dir = '/data/data_lsy/tvt_64/ln3_A/'
+data_dir = '/data/data_lsy/tvt_roi/ln3_A/'
 typeln = 'ln3_A'
 # data_dir_2 = '/data/train_val_test/ln3_A/'
 
@@ -73,62 +73,6 @@ num_epochs = 100
 # Flag for feature extracting. When False, we finetune the whole model, 
 #   when True we only update the reshaped layer params
 feature_extract = True
-
-
-class MyDataset(Dataset):
-    def __init__(self, file_path, transform = None, target_transform = None):
-        """
-        transform：数据处理，对图像进行随机剪裁，以及转换成tensor
-        """
-        self.datas = []
-        self.labels = []
-        img_paths= glob.glob(os.path.join(file_path, "*.npy")) 
-        for path in img_paths:
-            img, label= np.load(path, allow_pickle=True)   #通过index索引返回一个图像路径fn 与 标签label
-            for i in range(3):
-                self.data.append(img[:,:,i])
-                self.labels.append(label)
-        self.transform = transform
-        self.target_transform = target_transform
-    
-    def __getitem__(self, index):
-        img, label= np.load(self.img_paths[index], allow_pickle=True)   #通过index索引返回一个图像路径fn 与 标签label
-
-        label = int(label)
-        if self.transform is not None:
-            img = self.transform(img) 
-        return img, label              #这就返回一个样本
-    
-    def __len__(self):
-        return len(self.img_paths)          #返回长度，index就会自动的指导读取多少
-
-class MyDataset(Dataset):
-    def __init__(self, file_path, transform = None, target_transform = None):
-        """
-        transform：数据处理，对图像进行随机剪裁，以及转换成tensor
-        """
-        self.img_paths = []
-        self.img_paths= glob.glob(os.path.join(file_path, "*.npy"))                
-        self.transform = transform
-        self.target_transform = target_transform
-    
-    def __getitem__(self, index):
-        img, label= np.load(self.img_paths[index], allow_pickle=True)   #通过index索引返回一个图像路径fn 与 标签label
-        # if int(label)== 0:
-        #     label = np.array([1,0])
-        # else:
-        #     label = np.array([0, 1])
-        # label = np.array(label)
-        # label = torch.FloatTensor(label)
-        # img = torch.tensor(img)
-        label = int(label)
-        if self.transform is not None:
-            img = self.transform(img) 
-        return img, label              #这就返回一个样本
-    
-    def __len__(self):
-        return len(self.img_paths)          #返回长度，index就会自动的指导读取多少
-
 
 class FocalLossV1(nn.Module):
  
@@ -455,16 +399,16 @@ data_transforms = {
         # transforms.RandomResizedCrop(input_size),
         transforms.RandomHorizontalFlip(),
         # transforms.RandomVerticalFlip(),
-        transforms.ColorJitter(brightness=0.5, contrast=0.5, hue=0.5),
+        # transforms.ColorJitter(brightness=0.5, contrast=0.5, hue=0.5),
         transforms.ToTensor(),
-        transforms.Normalize([0.681, 0.681, 0.681], [0.10, 0.10, 0.10])   #imagenet
+        transforms.Normalize([0.679, 0.678, 0.678], [0.105, 0.107, 0.108])
     ]),
     'val': transforms.Compose([
         transforms.ToPILImage(),#不转换为PIL会报错
         transforms.Resize(input_size),
         transforms.CenterCrop(input_size),
         transforms.ToTensor(),
-        transforms.Normalize([0.68, 0.68, 0.68], [0.10, 0.10, 0.10])
+        transforms.Normalize([0.679, 0.678, 0.678], [0.105, 0.107, 0.108])
     ]),
 }
 
@@ -473,7 +417,7 @@ exVal_transforms = transforms.Compose([
         transforms.Resize(input_size),
         transforms.CenterCrop(input_size),
         transforms.ToTensor(),
-        transforms.Normalize([0.68, 0.68, 0.68], [0.10, 0.10, 0.10])
+        transforms.Normalize([0.679, 0.678, 0.678], [0.105, 0.107, 0.108])
     ])
     
 print("Initializing Datasets and Dataloaders...")
@@ -482,7 +426,7 @@ print("Initializing Datasets and Dataloaders...")
 
 # Create training and validation datasets
 image_datasets = {x: MyDataset(os.path.join(data_dir, x), data_transforms[x]) for x in ['train', 'val']}
-
+print(getStat(image_datasets['train']))
 # Create training and validation dataloaders
 train_data = MyDataset(os.path.join(data_dir,'train'))
 
@@ -515,10 +459,10 @@ dataloaders_dict = {'train': torch.utils.data.DataLoader(image_datasets['train']
                                             sampler = train_sampler
                                             ),
                     'val':torch.utils.data.DataLoader(image_datasets['val'], 
-                                            batch_size=len(val_data), 
-                                            shuffle=True, 
+                                            batch_size=batch_size, 
+                                            shuffle=False, 
                                             num_workers=0,
-                                            # sampler = val_sampler
+                                            sampler = val_sampler
                                             )
                 }
 
@@ -572,7 +516,7 @@ else:
 
 # Observe that all parameters are being optimized
 # optimizer_ft = optim.SGD(params_to_update, lr=0.005, momentum=0.9)
-optimizer_ft = optim.Adam(params_to_update, lr=0.005,  betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=True)
+optimizer_ft = optim.Adam(params_to_update, lr=0.001,  betas=(0.9, 0.999), eps=1e-08, weight_decay=0.01, amsgrad=True)
 
 
 ######################################################################
